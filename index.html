@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Escáner de Productos</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        :root {
+            --blanco: #EBEBEB;
+            --negro: #343434;
+            --gris: #868C8C;
+            --azul: #005493;
+            --boton: #AA703C;
+            --boton-hover: #8a5b2f;
+            --color-titulo: #343434;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Helvetica', sans-serif;
+            background: var(--blanco);
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            color: var(--negro);
+            padding: 20px;
+        }
+        h1 {
+            margin-bottom: 10px;
+            font-weight: 700;
+            color: var(--color-titulo);
+            text-shadow: 0 1px 3px rgba(0,84,147,0.08);
+        }
+        #reader {
+            width: 100%;
+            max-width: 600px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 8px 20px rgba(52,52,52,0.08);
+            margin-bottom: 20px;
+            background: var(--negro);
+        }
+        #resultado, #formulario, #btnEscanear, #asociarProducto {
+            background: var(--blanco);
+            border-radius: 12px;
+            max-width: 500px;
+            width: 100%;
+            padding: 25px 30px;
+            box-shadow: 0 4px 15px rgba(134,140,140,0.10);
+            margin-bottom: 20px;
+            border: 1px solid var(--gris);
+        }
+        #resultado { 
+            display: none; 
+            font-size: 1.1rem; 
+            line-height: 1.5; 
+            white-space: pre-line; 
+            color: var(--negro);
+        }
+        #formulario { display: none; }
+        #btnEscanear { display: none; text-align: center; }
+        #asociarProducto { display: none; text-align: center; }
+        input, select {
+            width: 100%;
+            padding: 12px 15px;
+            margin: 10px 0;
+            border-radius: 8px;
+            border: 1px solid var(--gris);
+            font-size: 1rem;
+            outline: none;
+            background: var(--blanco);
+            color: var(--negro);
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+        input::placeholder { color: var(--gris); }
+        input:focus, select:focus {
+            border-color: var(--azul);
+            box-shadow: 0 0 8px var(--azul, #005493, 0.15);
+        }
+        button {
+            background: var(--boton);
+            color: var(--blanco);
+            border: none;
+            padding: 14px 28px;
+            margin-top: 15px;
+            cursor: pointer;
+            font-size: 1.1rem;
+            border-radius: 10px;
+            box-shadow: 0 6px 15px rgba(170,112,60,0.10);
+            transition: background-color 0.3s, box-shadow 0.3s;
+            user-select: none;
+            font-weight: 600;
+            letter-spacing: 1px;
+        }
+        button:hover, button:focus {
+            background: var(--boton-hover);
+            box-shadow: 0 8px 20px rgba(170,112,60,0.18);
+            outline: none;
+        }
+        strong {
+            color: var(--azul);
+            text-shadow: 0 0 5px #EBEBEB;
+        }
+        @media (max-width: 480px) {
+            #reader { max-width: 100%; }
+            #resultado, #formulario, #btnEscanear, #asociarProducto { padding: 20px; }
+            button { width: 100%; font-size: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <h1>Escáner de Productos</h1>
+    <div id="reader"></div>
+    <div id="resultado"></div>
+
+    <div id="asociarProducto">
+        <p>¿Quieres asociar este código a un producto existente?</p>
+        <select id="selectorAsociar">
+            <option value="">Seleccione un producto</option>
+        </select>
+        <button onclick="asociarCodigo()">Asociar</button>
+        <button onclick="mostrarFormulario(true); document.getElementById('asociarProducto').style.display='none';">No, agregar como nuevo</button>
+    </div>
+
+    <div id="formulario" aria-label="Formulario para agregar producto">
+        <input type="text" id="artist" placeholder="Artista" autocomplete="off" />
+        <input type="text" id="name" placeholder="Nombre del producto" autocomplete="off" />
+        <input type="text" id="style" placeholder="Estilo" autocomplete="off" />
+        <input type="text" id="label" placeholder="Discográfica" autocomplete="off" />
+        <input type="text" id="origin" placeholder="Origen" autocomplete="off" />
+        <button onclick="agregarProducto()">Guardar Producto</button>
+    </div>
+
+    <div id="btnEscanear">
+        <button onclick="iniciarEscaneo()">Escanear otro producto</button>
+    </div>
+
+<script>
+const SUPABASE_URL = "https://xblivnihoenidybqbevm.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhibGl2bmlob2VuaWR5YnFiZXZtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDcyMzY5NDIsImV4cCI6MjA2MjgxMjk0Mn0.BBY3JbyPtnq0kZwBxsXOTXg_gaGCvSqVR0GAoxZZoF4";
+
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let html5QrcodeScanner;
+let escaneando = false;
+
+function mostrarResultado(mensaje) {
+    const resultado = document.getElementById('resultado');
+    resultado.style.display = 'block';
+    resultado.innerHTML = mensaje;
+}
+
+function ocultarResultado() {
+    const resultado = document.getElementById('resultado');
+    resultado.style.display = 'none';
+    resultado.innerHTML = '';
+}
+
+function mostrarFormulario(mostrar) {
+    document.getElementById('formulario').style.display = mostrar ? 'block' : 'none';
+    if (mostrar) document.getElementById('asociarProducto').style.display = 'none';
+}
+
+function mostrarBotonEscanear(mostrar) {
+    document.getElementById('btnEscanear').style.display = mostrar ? 'block' : 'none';
+}
+
+function formatearPrecioCLP(valor) {
+    if (valor === null || valor === undefined || isNaN(valor)) return 'No disponible';
+    return valor.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' });
+}
+
+async function procesarCodigo(codigo) {
+    if (!escaneando) return;
+    escaneando = false;
+    await html5QrcodeScanner.clear();
+
+    // Consulta en Supabase
+    const { data, error } = await supabaseClient
+        .from('products')
+        .select('id, name, artist, price, price_discounted, stock')
+        .eq('id', codigo)
+        .limit(1)
+        .maybeSingle();
+
+    if (error) {
+        mostrarResultado(`❌ Error al consultar producto: ${error.message}`);
+        mostrarBotonEscanear(true);
+        return;
+    }
+    if (data) {
+        // Producto encontrado
+        mostrarFormulario(false);
+        mostrarBotonEscanear(true);
+        const precio = formatearPrecioCLP(data.price);
+        const precioDesc = formatearPrecioCLP(data.price_discounted);
+        mostrarResultado(`
+            <strong>Producto encontrado:</strong><br><br>
+            <strong>Nombre:</strong> ${data.name}<br>
+            <strong>Artista:</strong> ${data.artist}<br>
+            <strong>Precio:</strong> ${precio}<br>
+            <strong>Precio con descuento:</strong> ${precioDesc}<br>
+            <strong>Stock:</strong> ${data.stock !== null ? data.stock : 'No disponible'}
+        `);
+    } else {
+        // Producto NO encontrado: preguntar si quiere asociar a uno existente
+        mostrarResultado('⚠️ Producto no registrado.<br>¿Quieres asociar este código a un producto existente?');
+        mostrarFormulario(false);
+        mostrarBotonEscanear(false);
+        document.getElementById('asociarProducto').style.display = 'block';
+        window.codigoActual = codigo;
+        cargarOpcionesAsociar();
+    }
+}
+
+async function cargarOpcionesAsociar() {
+    // Traer productos con id numérico de 2 dígitos o menos (0-99)
+    const { data, error } = await supabaseClient
+        .from('products')
+        .select('id, name')
+        .gte('id', 0)
+        .lte('id', 99);
+
+    let selector = document.getElementById('selectorAsociar');
+    selector.innerHTML = `<option value="">Seleccione un producto</option>`;
+    if (data && data.length > 0) {
+        data.forEach(prod => {
+            selector.innerHTML += `<option value="${prod.id}">${prod.id} - ${prod.name}</option>`;
+        });
+    }
+}
+
+// FUNCIÓN CORREGIDA: copia el producto con el nuevo id y elimina el antiguo
+async function asociarCodigo() {
+    let selector = document.getElementById('selectorAsociar');
+    let idAsociado = selector.value;
+    if (!idAsociado) {
+        mostrarResultado('⚠️ Debes seleccionar un producto para asociar.');
+        return;
+    }
+
+    const nuevoId = parseInt(window.codigoActual, 10);
+
+    // Comprobar si ya existe un producto con el nuevo id
+    const { data: existe, error: errorExiste } = await supabaseClient
+        .from('products')
+        .select('id')
+        .eq('id', nuevoId)
+        .maybeSingle();
+
+    if (existe) {
+        mostrarResultado('❌ Ya existe un producto con este código de barras. No se puede asociar.');
+        return;
+    }
+
+    // Obtener datos del producto base
+    const { data: productoBase, error: errorBase } = await supabaseClient
+        .from('products')
+        .select('*')
+        .eq('id', parseInt(idAsociado, 10))
+        .maybeSingle();
+
+    if (errorBase || !productoBase) {
+        mostrarResultado('❌ Error al obtener los datos del producto.');
+        return;
+    }
+
+    // Crear nuevo producto con el nuevo id y los mismos datos
+    let nuevoProducto = { ...productoBase, id: nuevoId };
+    delete nuevoProducto.created_at; // elimina campo si existe
+
+    const { error: errorInsert } = await supabaseClient
+        .from('products')
+        .insert([nuevoProducto]);
+
+    if (errorInsert) {
+        mostrarResultado('❌ Error al asociar producto: ' + errorInsert.message);
+        return;
+    }
+
+    // Eliminar el producto antiguo
+    const { error: errorDelete } = await supabaseClient
+        .from('products')
+        .delete()
+        .eq('id', parseInt(idAsociado, 10));
+
+    if (errorDelete) {
+        mostrarResultado('⚠️ Producto asociado, pero no se pudo eliminar el producto antiguo: ' + errorDelete.message);
+    } else {
+        mostrarResultado('✅ Código asociado correctamente al producto existente. Ahora el producto tiene el nuevo código de barras.');
+    }
+
+    document.getElementById('asociarProducto').style.display = 'none';
+    mostrarBotonEscanear(true);
+}
+
+function iniciarEscaneo() {
+    ocultarResultado();
+    mostrarFormulario(false);
+    mostrarBotonEscanear(false);
+    document.getElementById('asociarProducto').style.display = 'none';
+
+    if (!html5QrcodeScanner) {
+        html5QrcodeScanner = new Html5QrcodeScanner("reader", {
+            fps: 10,
+            qrbox: { width: 280, height: 120 },
+            supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA]
+        });
+    }
+    escaneando = true;
+    html5QrcodeScanner.render(procesarCodigo);
+}
+
+async function agregarProducto() {
+    const nuevoProducto = {
+        id: parseInt(window.codigoActual, 10),
+        artist: document.getElementById('artist').value.trim(),
+        name: document.getElementById('name').value.trim(),
+        style: document.getElementById('style').value.trim(),
+        label: document.getElementById('label').value.trim(),
+        origin: document.getElementById('origin').value.trim()
+    };
+
+    if (!nuevoProducto.artist || !nuevoProducto.name) {
+        mostrarResultado('⚠️ Por favor, complete al menos Artista y Nombre del producto.');
+        return;
+    }
+
+    const { error } = await supabaseClient
+        .from('products')
+        .insert([nuevoProducto]);
+
+    if (error) {
+        mostrarResultado(`❌ Error al agregar producto: ${error.message}`);
+    } else {
+        mostrarResultado('✅ ¡Producto agregado exitosamente!');
+        mostrarFormulario(false);
+        mostrarBotonEscanear(true);
+        document.querySelectorAll('#formulario input').forEach(input => input.value = '');
+    }
+}
+
+window.addEventListener('load', iniciarEscaneo);
+</script>
+</body>
+</html>
